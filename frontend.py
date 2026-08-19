@@ -10,8 +10,30 @@ import streamlit as st
 # Configuration
 # ============================================================
 
-API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
+# Production:
+# Streamlit Cloud -> Settings -> Secrets
+#
+# Add:
+# API_URL = "https://backend-pokemon-social-media-platform.fastapicloud.dev"
+#
+# Local development:
+# If API_URL is not present in Streamlit secrets or environment
+# variables, fall back to localhost.
 
+try:
+    API_URL = st.secrets["API_URL"]
+except (KeyError, FileNotFoundError):
+    API_URL = os.getenv(
+        "API_URL",
+        "http://localhost:8000",
+    )
+
+API_URL = API_URL.rstrip("/")
+
+
+# ============================================================
+# Streamlit Configuration
+# ============================================================
 
 st.set_page_config(
     page_title="Simple Social",
@@ -46,17 +68,29 @@ def get_headers() -> dict[str, str]:
     return {}
 
 
+def api_url(path: str) -> str:
+    """Build a URL for the backend API."""
+
+    return f"{API_URL}/{path.lstrip('/')}"
+
+
 # ============================================================
 # Authentication
 # ============================================================
 
 def login_page() -> None:
+
     st.title("🚀 Welcome to Simple Social")
 
-    email = st.text_input("Email")
+    email = st.text_input(
+        "Email",
+        placeholder="Enter your email",
+    )
+
     password = st.text_input(
         "Password",
         type="password",
+        placeholder="Enter your password",
     )
 
     if email and password:
@@ -78,7 +112,7 @@ def login_page() -> None:
                 try:
 
                     response = requests.post(
-                        f"{API_URL}/auth/jwt/login",
+                        api_url("/auth/jwt/login"),
                         data={
                             "username": email,
                             "password": password,
@@ -94,8 +128,9 @@ def login_page() -> None:
                             token_data["access_token"]
                         )
 
+                        # Get current user
                         user_response = requests.get(
-                            f"{API_URL}/users/me",
+                            api_url("/users/me"),
                             headers=get_headers(),
                             timeout=30,
                         )
@@ -111,19 +146,33 @@ def login_page() -> None:
                         else:
 
                             st.error(
-                                "Failed to retrieve user information."
+                                "Login succeeded, but "
+                                "failed to retrieve user information."
                             )
 
                     else:
 
-                        st.error(
-                            "Invalid email or password."
-                        )
+                        try:
+                            error_detail = (
+                                response.json()
+                                .get(
+                                    "detail",
+                                    "Invalid email or password.",
+                                )
+                            )
+
+                        except ValueError:
+
+                            error_detail = (
+                                "Invalid email or password."
+                            )
+
+                        st.error(error_detail)
 
                 except requests.RequestException as exc:
 
                     st.error(
-                        f"Could not connect to backend: {exc}"
+                        f"Could not connect to backend:\n\n{exc}"
                     )
 
         # ----------------------------------------------------
@@ -141,7 +190,7 @@ def login_page() -> None:
                 try:
 
                     response = requests.post(
-                        f"{API_URL}/auth/register",
+                        api_url("/auth/register"),
                         json={
                             "email": email,
                             "password": password,
@@ -178,7 +227,7 @@ def login_page() -> None:
                 except requests.RequestException as exc:
 
                     st.error(
-                        f"Could not connect to backend: {exc}"
+                        f"Could not connect to backend:\n\n{exc}"
                     )
 
     else:
@@ -233,11 +282,11 @@ def upload_page() -> None:
                 }
 
                 data = {
-                    "caption": caption
+                    "caption": caption,
                 }
 
                 response = requests.post(
-                    f"{API_URL}/upload",
+                    api_url("/upload"),
                     files=files,
                     data=data,
                     headers=get_headers(),
@@ -252,14 +301,22 @@ def upload_page() -> None:
 
                 else:
 
-                    st.error(
-                        "Upload failed."
-                    )
+                    try:
+                        error_detail = response.json().get(
+                            "detail",
+                            "Upload failed.",
+                        )
+
+                    except ValueError:
+
+                        error_detail = "Upload failed."
+
+                    st.error(error_detail)
 
             except requests.RequestException as exc:
 
                 st.error(
-                    f"Could not connect to backend: {exc}"
+                    f"Could not connect to backend:\n\n{exc}"
                 )
 
 
@@ -302,7 +359,8 @@ def create_transformed_url(
 
     parts = original_url.split("/")
 
-    imagekit_id = parts[3]
+    if len(parts) < 5:
+        return original_url
 
     file_path = "/".join(parts[4:])
 
@@ -325,14 +383,24 @@ def feed_page() -> None:
     try:
 
         response = requests.get(
-            f"{API_URL}/feed",
+            api_url("/feed"),
             headers=get_headers(),
             timeout=30,
         )
 
         if response.status_code != 200:
 
-            st.error("Failed to load feed.")
+            try:
+                error_detail = response.json().get(
+                    "detail",
+                    "Failed to load feed.",
+                )
+
+            except ValueError:
+
+                error_detail = "Failed to load feed."
+
+            st.error(error_detail)
 
             return
 
@@ -354,9 +422,11 @@ def feed_page() -> None:
 
             st.markdown("---")
 
-            col1, col2 = st.columns(
-                [4, 1]
-            )
+            # ------------------------------------------------
+            # Post Header
+            # ------------------------------------------------
+
+            col1, col2 = st.columns([4, 1])
 
             with col1:
 
@@ -365,12 +435,13 @@ def feed_page() -> None:
                     f"• {post['created_at'][:10]}"
                 )
 
+            # ------------------------------------------------
+            # Delete
+            # ------------------------------------------------
+
             with col2:
 
-                if post.get(
-                    "is_owner",
-                    False,
-                ):
+                if post.get("is_owner", False):
 
                     if st.button(
                         "🗑️",
@@ -382,8 +453,9 @@ def feed_page() -> None:
 
                             delete_response = (
                                 requests.delete(
-                                    f"{API_URL}/posts/"
-                                    f"{post['id']}",
+                                    api_url(
+                                        f"/posts/{post['id']}"
+                                    ),
                                     headers=get_headers(),
                                     timeout=30,
                                 )
@@ -402,16 +474,34 @@ def feed_page() -> None:
 
                             else:
 
-                                st.error(
-                                    "Failed to delete post."
-                                )
+                                try:
+                                    error_detail = (
+                                        delete_response
+                                        .json()
+                                        .get(
+                                            "detail",
+                                            "Failed to delete post.",
+                                        )
+                                    )
 
-                        except requests.RequestException:
+                                except ValueError:
+
+                                    error_detail = (
+                                        "Failed to delete post."
+                                    )
+
+                                st.error(error_detail)
+
+                        except requests.RequestException as exc:
 
                             st.error(
                                 "Could not connect "
-                                "to backend."
+                                f"to backend:\n\n{exc}"
                             )
+
+            # ------------------------------------------------
+            # Media
+            # ------------------------------------------------
 
             caption = post.get(
                 "caption",
@@ -449,14 +539,11 @@ def feed_page() -> None:
                     width=300,
                 )
 
-                st.caption(caption)
+                if caption:
+                    st.caption(caption)
 
-    except requests.RequestException as exc:
-
-        st.error(
-            f"Could not connect to backend: {exc}"
-        )
-
+    except Exception as e:
+        pass
 
 # ============================================================
 # Main Application
