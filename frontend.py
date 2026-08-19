@@ -11,10 +11,6 @@ import streamlit as st
 # ============================================================
 
 # Production:
-# Streamlit Cloud -> Settings -> Secrets
-#
-# Add:
-# API_URL = "https://backend-pokemon-social-media-platform.fastapicloud.dev"
 #
 # Local development:
 # If API_URL is not present in Streamlit secrets or environment
